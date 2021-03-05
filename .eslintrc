@@ -1,0 +1,30 @@
+{
+	"root": true,
+	"parser": "@typescript-eslint/parser",
+	"plugins": [
+		"@typescript-eslint"
+	],
+	"extends": [
+		"eslint:recommended",
+		"plugin:@typescript-eslint/recommended"
+	],
+	"rules": {
+		// Possible Errors
+
+		// Best Practices
+
+		// Strict Mode
+		"indent": "off",
+
+		// Variables
+
+		// Stylistic Issues
+
+		// ECMAScript 6
+
+		// TypeScript
+		"@typescript-eslint/array-type": ["error", { "default": "generic", "readonly": "generic" }],
+		"@typescript-eslint/indent": ["error", "tab"],
+		"@typescript-eslint/prefer-function-type": ["error"]
+	}
+}

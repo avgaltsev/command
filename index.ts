@@ -1,58 +1,173 @@
+/**
+ * Command parameter type.
+ */
 export type CommandParameter = number | string | boolean;
 
+/**
+ * A list of parameters that can be passed to a command handling function.
+ *
+ * The consumer application should extend this interface to define command parameters.
+ *
+ * If a command parameter has a nullable type, it means that it can be made an optional parameter provided that there is
+ * `defaultValue` property set to `null` in the parameter configuration.
+ */
 export interface CommandParameters {
-	[name: string]: CommandParameter;
+	[name: string]: CommandParameter | null;
 }
 
-export type CommandFunction = (parameters: any) => any;
+/**
+ * Command handling function that takes a list of typed parameters and returns any result.
+ *
+ * The consumer application should implement command handling functions that can be assigned to this type.
+ */
+export type CommandFunction<T extends CommandParameters> = <U extends T>(parameters: U) => unknown;
 
+/**
+ * Abstract parameter configuration interface with no type restrictions.
+ *
+ * Normally shouldn't be used outside of this library.
+ */
 export interface AbstractParameter {
+	/**
+	 * Parameter type that will be used for value type conversion.
+	 */
 	type: "number" | "string" | "boolean";
-	defaultValue?: CommandParameter;
+
+	/**
+	 * _Optional_. Default parameter value.
+	 *
+	 * If set, the corresponding command line argument can be omitted. If set to `null`, it means that the parameter
+	 * is optional (the corresponding command parameter type should be nullable as well).
+	 */
+	defaultValue?: CommandParameter | null;
+
+	/**
+	 * _Optional_. Parameter command line alias.
+	 *
+	 * Usually a one letter string. Users can use parameter aliases prefixed with one dash instead of a full parameter
+	 * name with two dashes.
+	 */
+	shorthand?: string;
+
+	/**
+	 * _Optional_. Parameter description.
+	 *
+	 * If set, the parameter will be listed in Usage Notes.
+	 */
 	description?: string;
 }
 
-export interface GenericParameter<T extends CommandParameter> extends AbstractParameter {
+/**
+ * Parameter configuration interface with type constraints.
+ */
+export interface Parameter<T extends CommandParameter | null> extends AbstractParameter {
 	type: T extends number ? "number" : T extends string ? "string" : T extends boolean ? "boolean" : never;
-	defaultValue?: T;
+	defaultValue?: T extends null ? T | null : T;
 }
 
+/**
+ * Parameters configuration that corresponds the command handler function parameters list.
+ */
 export type Parameters<T extends CommandParameters> = {
-	[K in keyof T]: GenericParameter<T[K]>;
+	[K in keyof T]: Parameter<T[K]>;
 };
 
+/**
+ * Abstract command configuration interface with no type restrictions.
+ *
+ * Normally shouldn't be used outside of this library.
+ */
 export interface AbstractCommandConfig {
-	parameters: Parameters<any>;
-	command: CommandFunction;
+	/**
+	 * Parameters configuration.
+	 */
+	parameters: Parameters<CommandParameters>;
+
+	/**
+	 * Command handling function.
+	 */
+	command: CommandFunction<CommandParameters>;
+
+	/**
+	 * _Optional_. Command description.
+	 *
+	 * If set, it will be displayed in Usage Notes.
+	 */
+	description?: string;
 }
 
-export interface GenericCommandConfig<P extends CommandParameters, C extends CommandFunction> extends AbstractCommandConfig {
-	parameters: Parameters<P>;
-	command: C;
+/**
+ * Command configuration interface with parameter types constraints.
+ */
+export interface CommandConfig<T extends CommandParameters> extends AbstractCommandConfig {
+	parameters: Parameters<T>;
+	command: CommandFunction<T>;
 }
 
-export type CommandConfig<C extends CommandFunction> = C extends (parameters: infer P) => any ? P extends CommandParameters ? GenericCommandConfig<P, C> : never : never;
-
+/**
+ * Commands configuration interface.
+ * Shouldn't be used directly outside of this library because it has no type constraints.
+ */
 export interface CommandConfigs {
-	[name: string]: GenericCommandConfig<CommandParameters, CommandFunction>;
+	[name: string]: AbstractCommandConfig;
 }
 
+/**
+ * Argument value interface.
+ */
 export interface Arg {
-	rawValue?: string;
+	/**
+	 * Raw argument value taken from command line input.
+	 */
+	rawValue: string;
+
+	/**
+	 * Typed argument value.
+	 */
 	value?: CommandParameter;
 }
 
+/**
+ * Arguments list.
+ */
 export interface Args {
 	[name: string]: Arg;
 }
 
-function getCommandConfig(commandConfigs: CommandConfigs): GenericCommandConfig<any, any> {
-	const commandName = process.argv[2];
+/**
+ * Gets command name from the command line input. Returns "default" if no command name provided.
+ *
+ * @param argv - Command line input normally taken from `process.argv`.
+ */
+export function getCommandName(argv: Array<string>): string {
+	// Assuming there is always an explicit command name provided, for now.
+	// TODO: Add support for "default" command when there is no explicit command name.
+	// TODO: Throw an error when the provided command has incorrect name (i.e. dashed string or has spaces).
+	return argv[2];
+}
 
-	if (commandName === undefined) {
-		throw new Error("No command provided");
+/**
+ * Gets raw arguments from the command line input.
+ *
+ * @param argv - Command line input normally taken from `process.argv`.
+ */
+export function getRawArgs(argv: Array<string>): Array<string> {
+	const commandName = getCommandName(argv);
+
+	if (commandName === "default") {
+		return argv.slice(2);
 	}
 
+	return argv.slice(3);
+}
+
+/**
+ * Gets specific command configuration using provided command name.
+ *
+ * @param commandConfigs - Command configurations consisting of command executables and their parameter requirements.
+ * @param commandName - Command name.
+ */
+export function getCommandConfig(commandConfigs: CommandConfigs, commandName: string): CommandConfig<CommandParameters> {
 	const commandConfig = commandConfigs[commandName];
 
 	if (commandConfig === undefined) {
@@ -62,15 +177,24 @@ function getCommandConfig(commandConfigs: CommandConfigs): GenericCommandConfig<
 	return commandConfig;
 }
 
-function getArgs(): Args {
-	const args = process.argv.slice(3).reduce<Args>((result, arg) => {
+/**
+ * Parses raw arguments into an arguments list consisting of raw string values only.
+ *
+ * Arguments can only be present in a `--name` or `--name=value` form.
+ *
+ * @param rawArgs - Raw arguments.
+ */
+export function getArgs(rawArgs: Array<string>): Args {
+	const args = rawArgs.reduce<Args>((result, arg) => {
 		const matches = arg.match(/^--([a-zA-Z0-9]+)(?:=(.+))?/);
 
-		if (matches !== null) {
-			result[matches[1]] = {
-				rawValue: matches[2],
-			};
+		if (matches === null) {
+			throw new Error(`Unknown argument: ${arg}`);
 		}
+
+		result[matches[1]] = {
+			rawValue: matches[2],
+		};
 
 		return result;
 	}, {});
@@ -78,8 +202,19 @@ function getArgs(): Args {
 	return args;
 }
 
-function getCommandParameters(commandConfig: GenericCommandConfig<any, any>, args: Args): CommandParameters {
-	const missingArgs = Object.entries(commandConfig.parameters).filter(([parameterName, parameter]) => {
+/**
+ * Populates arguments list with typed values using provided parameters configuration containing types information
+ * and default values.
+ *
+ * Throws an error if not every argument provided or there are unknown arguments.
+ *
+ * TODO: Think about required/optional flag assertions. Right now every parameter is required.
+ *
+ * @param commandConfigParameters - Parameters configuration taken from a command configuration.
+ * @param args - Arguments list with raw values.
+ */
+export function getCommandParameters(commandConfigParameters: Parameters<CommandParameters>, args: Args): CommandParameters {
+	const missingArgs = Object.entries(commandConfigParameters).filter(([parameterName, parameter]) => {
 		if (args[parameterName] === undefined) {
 			args[parameterName] = {};
 		}
@@ -89,7 +224,7 @@ function getCommandParameters(commandConfig: GenericCommandConfig<any, any>, arg
 		}
 
 		if (args[parameterName].rawValue !== undefined) {
-			args[parameterName].value = args[parameterName].rawValue; // TODO: convert
+			args[parameterName].value = args[parameterName].rawValue; // TODO: Convert to a specific type.
 		}
 
 		return args[parameterName].value === undefined;
@@ -116,13 +251,35 @@ function getCommandParameters(commandConfig: GenericCommandConfig<any, any>, arg
 	return commandParameters;
 }
 
-export async function run(commandConfigs: CommandConfigs): Promise<any> {
-	const commandConfig = getCommandConfig(commandConfigs);
-	const args = getArgs();
+/**
+ * Generates a usage information based on provided command configurations.
+ *
+ * @param commandConfigs - Command configurations consisting of command executables and their parameter requirements.
+ */
+export function getUsageNotes(commandConfigs: CommandConfigs): string {
+	return "";
+}
 
-	const commandParameters = getCommandParameters(commandConfig, args);
+/**
+ * Runs a command using predefined command configurations and data taken from the command line input.
+ *
+ * @param commandConfigs - Command configurations consisting of command executables and their parameter requirements.
+ * @param argv - Command line input normally taken from `process.argv`.
+ */
+export function run(commandConfigs: CommandConfigs, argv: Array<string>): Promise<unknown> {
+	try {
+		const commandName = getCommandName(argv);
+		const rawArgs = getRawArgs(argv);
 
-	const commandResult = commandConfig.command(commandParameters);
+		const commandConfig = getCommandConfig(commandConfigs, commandName);
+		const args = getArgs(rawArgs);
 
-	return Promise.resolve(commandResult);
+		const commandParameters = getCommandParameters(commandConfig.parameters, args);
+
+		const commandResult = commandConfig.command(commandParameters);
+
+		return Promise.resolve(commandResult);
+	} catch (e) {
+		return Promise.reject(e);
+	}
 }

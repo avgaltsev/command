@@ -9,7 +9,7 @@ export type CommandParameter = number | string | boolean;
  * The consumer application should extend this interface to define command parameters.
  *
  * If a command parameter has a nullable type, it means that it can be made an optional parameter provided that there is
- * `defaultValue` property set to `null` in the parameter configuration.
+ * `defaultValue` property set to `null` in the corresponding parameter configuration.
  */
 export interface CommandParameters {
 	[name: string]: CommandParameter | null;
@@ -21,6 +21,11 @@ export interface CommandParameters {
  * The consumer application should implement command handling functions that can be assigned to this type.
  */
 export type CommandFunction<T extends CommandParameters> = <U extends T>(parameters: U) => unknown;
+
+/**
+ * Command handling function with applied command parameters.
+ */
+export type CommandExecutable = () => unknown;
 
 /**
  * Abstract parameter configuration interface with no type restrictions.
@@ -113,31 +118,15 @@ export interface CommandConfigs {
 }
 
 /**
- * Argument value interface.
+ * Raw arguments list.
  */
-export interface Arg {
-	/**
-	 * Raw argument value taken from command line input.
-	 */
-	rawValue: string;
-
-	/**
-	 * Typed argument value.
-	 */
-	value?: CommandParameter;
+export interface RawArguments {
+	[name: string]: string | null;
 }
 
-/**
- * Arguments list.
- */
-export interface Args {
-	[name: string]: Arg;
-}
-
-/**
- * Command handling function with applied command parameters.
- */
-export type CommandExecutable = () => unknown;
+const COMMAND_NAME_REGEXP = /^[a-zA-Z](?:[a-zA-Z0-9_-]*)?$/;
+const COMMAND_ARGUMENT_NAME_REGEXP = /^--([a-zA-Z0-9](?:[a-zA-Z0-9_-]*)?)(?:=(.+))?$/;
+const COMMAND_ARGUMENT_SHORTHAND_REGEXP = /^-([a-zA-Z0-9](?:[a-zA-Z0-9_-]*)?)$/;
 
 /**
  * Command session.
@@ -146,7 +135,8 @@ export class Command {
 	/**
 	 * Constructor.
 	 *
-	 * @param commandConfigs - Command configurations consisting of command executables and their parameter requirements.
+	 * @param commandConfigs - Command configurations consisting of command executables and their parameter
+	 * requirements.
 	 */
 	constructor(
 		private readonly commandConfigs: CommandConfigs,
@@ -158,20 +148,32 @@ export class Command {
 	 * @param argv - Command line input normally taken from `process.argv`.
 	 */
 	private getCommandName(argv: Array<string>): string {
-		// Assuming there is always an explicit command name provided, for now.
-		// TODO: Add support for "default" command when there is no explicit command name.
-		// TODO: Throw an error when the provided command has incorrect name (i.e. dashed string or has spaces).
-		return argv[2];
+		// If the second element exists and matches the command name regexp, take it as a command name.
+		if (
+			argv[2] !== undefined &&
+			argv[2].match(COMMAND_NAME_REGEXP) !== null
+		) {
+			return argv[2];
+		}
+
+		// If it doesn't exist or matches one of valid argument formats, take "default" as a command name.
+		if (
+			argv[2] === undefined ||
+			argv[2].match(COMMAND_ARGUMENT_NAME_REGEXP) !== null ||
+			argv[2].match(COMMAND_ARGUMENT_SHORTHAND_REGEXP) !== null
+		) {
+			return "default";
+		}
+
+		throw new Error("No command name provided.");
 	}
 
 	/**
-	 * Gets raw arguments from the command line input.
+	 * Gets arguments list from the command line input.
 	 *
 	 * @param argv - Command line input normally taken from `process.argv`.
 	 */
-	private getRawArgs(argv: Array<string>): Array<string> {
-		const commandName = this.getCommandName(argv);
-
+	private getCommandLineArguments(argv: Array<string>, commandName: string): Array<string> {
 		if (commandName === "default") {
 			return argv.slice(2);
 		}
@@ -195,28 +197,58 @@ export class Command {
 	}
 
 	/**
-	 * Parses raw arguments into an arguments list consisting of raw string values only.
+	 * Parses command line arguments into an arguments list consisting of raw values only. No configuration checks
+	 * at this stage, format validity checks only.
 	 *
 	 * Arguments can only be present in a `--name` or `--name=value` form.
 	 *
-	 * @param rawArgs - Raw arguments.
+	 * @param commandLineArguments - Command line arguments.
 	 */
-	private getArgs(rawArgs: Array<string>): Args {
-		const args = rawArgs.reduce<Args>((result, arg) => {
-			const matches = arg.match(/^--([a-zA-Z0-9]+)(?:=(.+))?/);
+	private getRawArguments(commandLineArguments: Array<string>): RawArguments {
+		let skipNextArg = false;
 
-			if (matches === null) {
-				throw new Error(`Unknown argument: ${arg}`);
+		const rawArguments = commandLineArguments.reduce<RawArguments>((result, commandLineArg, index) => {
+			// The current element has been taken into account on the previous cycle, skip it.
+			if (skipNextArg) {
+				skipNextArg = false;
+
+				return result;
 			}
 
-			result[matches[1]] = {
-				rawValue: matches[2],
-			};
+			const matches = commandLineArg.match(COMMAND_ARGUMENT_NAME_REGEXP) ?? commandLineArg.match(COMMAND_ARGUMENT_SHORTHAND_REGEXP);
+
+			if (matches === null) {
+				throw new Error(`Invalid argument: ${commandLineArg}`);
+			}
+
+			// If the current element matches the regexp and there is a value in it, take it.
+			if (matches[2] !== undefined) {
+				result[matches[1]] = matches[2];
+
+				return result;
+			}
+
+			// If the current element matches the regexp and the next element doesn't, take the next element as a value.
+			if (
+				commandLineArguments[index + 1] !== undefined &&
+				commandLineArguments[index + 1].match(COMMAND_ARGUMENT_NAME_REGEXP) === null &&
+				commandLineArguments[index + 1].match(COMMAND_ARGUMENT_SHORTHAND_REGEXP) === null
+			) {
+				result[matches[1]] = commandLineArguments[index + 1];
+
+				skipNextArg = true;
+
+				return result;
+			}
+
+			// If the current element matches the regexp but there is no value, leave it with no value. It might be
+			// a boolean flag.
+			result[matches[1]] = null;
 
 			return result;
 		}, {});
 
-		return args;
+		return rawArguments;
 	}
 
 	/**
@@ -225,43 +257,84 @@ export class Command {
 	 *
 	 * Throws an error if not every argument provided or there are unknown arguments.
 	 *
-	 * @param commandConfigParameters - Parameters configuration taken from a command configuration.
-	 * @param args - Arguments list with raw values.
+	 * @param commandParametersConfig - Parameters configuration taken from a command configuration.
+	 * @param rawArguments - Arguments list with raw values.
 	 */
-	private getCommandParameters(commandConfigParameters: Parameters<CommandParameters>, args: Args): CommandParameters {
-		const missingArgs = Object.entries(commandConfigParameters).filter(([parameterName, parameter]) => {
-			if (args[parameterName] === undefined) {
-				args[parameterName] = {};
+	private getCommandParameters(commandParametersConfig: Parameters<CommandParameters>, rawArguments: RawArguments): CommandParameters {
+		const commandParameters: CommandParameters = {};
+
+		// Getting through the parameters configuration trying to figure out if we have all the data.
+		const missingArguments = Object.entries(commandParametersConfig).filter(([parameterName, parameter]) => {
+			const rawArgument = rawArguments[parameterName];
+
+			// All boolean parameters are false by default.
+			if (parameter.type === "boolean") {
+				commandParameters[parameterName] = false;
 			}
 
+			// Apply default value if it exists.
 			if (parameter.defaultValue !== undefined) {
-				args[parameterName].value = parameter.defaultValue;
+				commandParameters[parameterName] = parameter.defaultValue;
 			}
 
-			if (args[parameterName].rawValue !== undefined) {
-				args[parameterName].value = args[parameterName].rawValue; // TODO: Convert to a specific type.
+			// Apply command line input value if it exists.
+			if (rawArgument !== undefined && rawArgument !== null) {
+				switch (parameter.type) {
+					case "boolean": {
+						if (["true", "yes", "y", "on", "1"].includes(rawArgument.toLowerCase())) {
+							commandParameters[parameterName] = true;
+
+							break;
+						}
+
+						if (["false", "no", "n", "off", "0"].includes(rawArgument.toLowerCase())) {
+							commandParameters[parameterName] = false;
+
+							break;
+						}
+
+						throw new Error(`Invalid boolean value provided for parameter ${parameterName}: ${rawArgument}`);
+					}
+
+					case "number": {
+						const numberValue = Number(rawArgument);
+
+						if (Number.isNaN(numberValue)) {
+							throw new Error(`Invalid numeric value provided for parameter ${parameterName}: ${rawArgument}`);
+						}
+
+						commandParameters[parameterName] = numberValue;
+
+						break;
+					}
+
+					case "string": {
+						commandParameters[parameterName] = rawArgument;
+
+						break;
+					}
+				}
 			}
 
-			return args[parameterName].value === undefined;
+			// Handling a special case for boolean flags with no value.
+			if (rawArgument === null && parameter.type === "boolean") {
+				commandParameters[parameterName] === true;
+			}
+
+			return commandParameters[parameterName] === undefined;
 		});
 
-		const unknownArgs = Object.entries(args).filter(([argName, arg]) => {
-			return arg.value === undefined;
+		const unknownArguments = Object.keys(rawArguments).filter((argName) => {
+			return !Object.keys(commandParametersConfig).includes(argName);
 		});
 
-		if (missingArgs.length > 0) {
-			throw new Error(`Missing arguments: ${missingArgs.map(([parameterName]) => parameterName).join(", ")}`);
+		if (missingArguments.length > 0) {
+			throw new Error(`Missing arguments: ${missingArguments.map(([parameterName]) => parameterName).join(", ")}`);
 		}
 
-		if (unknownArgs.length > 0) {
-			throw new Error(`Unknown arguments: ${unknownArgs.map(([argName]) => argName).join(", ")}`);
+		if (unknownArguments.length > 0) {
+			throw new Error(`Unknown arguments: ${unknownArguments.map((argName) => argName).join(", ")}`);
 		}
-
-		const commandParameters = Object.entries(args).reduce<CommandParameters>((result, [argName, arg]) => {
-			result[argName] = arg.value!;
-
-			return result;
-		}, {});
 
 		return commandParameters;
 	}
@@ -280,12 +353,12 @@ export class Command {
 	 */
 	public getCommandExecutable(argv: Array<string>): CommandExecutable {
 		const commandName = this.getCommandName(argv);
-		const rawArgs = this.getRawArgs(argv);
+		const commandLineArguments = this.getCommandLineArguments(argv, commandName);
 
 		const commandConfig = this.getCommandConfig(commandName);
-		const args = this.getArgs(rawArgs);
+		const rawArguments = this.getRawArguments(commandLineArguments);
 
-		const commandParameters = this.getCommandParameters(commandConfig.parameters, args);
+		const commandParameters = this.getCommandParameters(commandConfig.parameters, rawArguments);
 
 		return commandConfig.command.bind(null, commandParameters);
 	}

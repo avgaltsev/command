@@ -135,129 +135,160 @@ export interface Args {
 }
 
 /**
- * Gets command name from the command line input. Returns "default" if no command name provided.
- *
- * @param argv - Command line input normally taken from `process.argv`.
+ * Command handling function with applied command parameters.
  */
-export function getCommandName(argv: Array<string>): string {
-	// Assuming there is always an explicit command name provided, for now.
-	// TODO: Add support for "default" command when there is no explicit command name.
-	// TODO: Throw an error when the provided command has incorrect name (i.e. dashed string or has spaces).
-	return argv[2];
-}
+export type CommandExecutable = () => unknown;
 
 /**
- * Gets raw arguments from the command line input.
- *
- * @param argv - Command line input normally taken from `process.argv`.
+ * Command session.
  */
-export function getRawArgs(argv: Array<string>): Array<string> {
-	const commandName = getCommandName(argv);
+export class Command {
+	/**
+	 * Constructor.
+	 *
+	 * @param commandConfigs - Command configurations consisting of command executables and their parameter requirements.
+	 */
+	constructor(
+		private readonly commandConfigs: CommandConfigs,
+	) {}
 
-	if (commandName === "default") {
-		return argv.slice(2);
+	/**
+	 * Gets command name from the command line input. Returns "default" if there is no command name provided.
+	 *
+	 * @param argv - Command line input normally taken from `process.argv`.
+	 */
+	private getCommandName(argv: Array<string>): string {
+		// Assuming there is always an explicit command name provided, for now.
+		// TODO: Add support for "default" command when there is no explicit command name.
+		// TODO: Throw an error when the provided command has incorrect name (i.e. dashed string or has spaces).
+		return argv[2];
 	}
 
-	return argv.slice(3);
-}
+	/**
+	 * Gets raw arguments from the command line input.
+	 *
+	 * @param argv - Command line input normally taken from `process.argv`.
+	 */
+	private getRawArgs(argv: Array<string>): Array<string> {
+		const commandName = this.getCommandName(argv);
 
-/**
- * Gets specific command configuration using provided command name.
- *
- * @param commandConfigs - Command configurations consisting of command executables and their parameter requirements.
- * @param commandName - Command name.
- */
-export function getCommandConfig(commandConfigs: CommandConfigs, commandName: string): CommandConfig<CommandParameters> {
-	const commandConfig = commandConfigs[commandName];
+		if (commandName === "default") {
+			return argv.slice(2);
+		}
 
-	if (commandConfig === undefined) {
-		throw new Error(`Unknown command: ${commandName}`);
+		return argv.slice(3);
 	}
 
-	return commandConfig;
-}
+	/**
+	 * Gets specific command configuration using provided command name.
+	 *
+	 * @param commandName - Command name.
+	 */
+	private getCommandConfig(commandName: string): CommandConfig<CommandParameters> {
+		const commandConfig = this.commandConfigs[commandName];
 
-/**
- * Parses raw arguments into an arguments list consisting of raw string values only.
- *
- * Arguments can only be present in a `--name` or `--name=value` form.
- *
- * @param rawArgs - Raw arguments.
- */
-export function getArgs(rawArgs: Array<string>): Args {
-	const args = rawArgs.reduce<Args>((result, arg) => {
-		const matches = arg.match(/^--([a-zA-Z0-9]+)(?:=(.+))?/);
-
-		if (matches === null) {
-			throw new Error(`Unknown argument: ${arg}`);
+		if (commandConfig === undefined) {
+			throw new Error(`Unknown command: ${commandName}`);
 		}
 
-		result[matches[1]] = {
-			rawValue: matches[2],
-		};
-
-		return result;
-	}, {});
-
-	return args;
-}
-
-/**
- * Populates arguments list with typed values using provided parameters configuration containing types information
- * and default values.
- *
- * Throws an error if not every argument provided or there are unknown arguments.
- *
- * TODO: Think about required/optional flag assertions. Right now every parameter is required.
- *
- * @param commandConfigParameters - Parameters configuration taken from a command configuration.
- * @param args - Arguments list with raw values.
- */
-export function getCommandParameters(commandConfigParameters: Parameters<CommandParameters>, args: Args): CommandParameters {
-	const missingArgs = Object.entries(commandConfigParameters).filter(([parameterName, parameter]) => {
-		if (args[parameterName] === undefined) {
-			args[parameterName] = {};
-		}
-
-		if (parameter.defaultValue !== undefined) {
-			args[parameterName].value = parameter.defaultValue;
-		}
-
-		if (args[parameterName].rawValue !== undefined) {
-			args[parameterName].value = args[parameterName].rawValue; // TODO: Convert to a specific type.
-		}
-
-		return args[parameterName].value === undefined;
-	});
-
-	const unknownArgs = Object.entries(args).filter(([argName, arg]) => {
-		return arg.value === undefined;
-	});
-
-	if (missingArgs.length > 0) {
-		throw new Error(`Missing arguments: ${missingArgs.map(([parameterName]) => parameterName).join(", ")}`);
+		return commandConfig;
 	}
 
-	if (unknownArgs.length > 0) {
-		throw new Error(`Unknown arguments: ${unknownArgs.map(([argName]) => argName).join(", ")}`);
+	/**
+	 * Parses raw arguments into an arguments list consisting of raw string values only.
+	 *
+	 * Arguments can only be present in a `--name` or `--name=value` form.
+	 *
+	 * @param rawArgs - Raw arguments.
+	 */
+	private getArgs(rawArgs: Array<string>): Args {
+		const args = rawArgs.reduce<Args>((result, arg) => {
+			const matches = arg.match(/^--([a-zA-Z0-9]+)(?:=(.+))?/);
+
+			if (matches === null) {
+				throw new Error(`Unknown argument: ${arg}`);
+			}
+
+			result[matches[1]] = {
+				rawValue: matches[2],
+			};
+
+			return result;
+		}, {});
+
+		return args;
 	}
 
-	const commandParameters = Object.entries(args).reduce<CommandParameters>((result, [argName, arg]) => {
-		result[argName] = arg.value!;
+	/**
+	 * Populates arguments list with typed values using provided parameters configuration containing types information
+	 * and default values.
+	 *
+	 * Throws an error if not every argument provided or there are unknown arguments.
+	 *
+	 * @param commandConfigParameters - Parameters configuration taken from a command configuration.
+	 * @param args - Arguments list with raw values.
+	 */
+	private getCommandParameters(commandConfigParameters: Parameters<CommandParameters>, args: Args): CommandParameters {
+		const missingArgs = Object.entries(commandConfigParameters).filter(([parameterName, parameter]) => {
+			if (args[parameterName] === undefined) {
+				args[parameterName] = {};
+			}
 
-		return result;
-	}, {});
+			if (parameter.defaultValue !== undefined) {
+				args[parameterName].value = parameter.defaultValue;
+			}
 
-	return commandParameters;
-}
+			if (args[parameterName].rawValue !== undefined) {
+				args[parameterName].value = args[parameterName].rawValue; // TODO: Convert to a specific type.
+			}
 
-/**
- * Generates a usage information based on provided command configurations.
- *
- * @param commandConfigs - Command configurations consisting of command executables and their parameter requirements.
- */
-export function getUsageNotes(commandConfigs: CommandConfigs): string {
-	return "";
+			return args[parameterName].value === undefined;
+		});
+
+		const unknownArgs = Object.entries(args).filter(([argName, arg]) => {
+			return arg.value === undefined;
+		});
+
+		if (missingArgs.length > 0) {
+			throw new Error(`Missing arguments: ${missingArgs.map(([parameterName]) => parameterName).join(", ")}`);
+		}
+
+		if (unknownArgs.length > 0) {
+			throw new Error(`Unknown arguments: ${unknownArgs.map(([argName]) => argName).join(", ")}`);
+		}
+
+		const commandParameters = Object.entries(args).reduce<CommandParameters>((result, [argName, arg]) => {
+			result[argName] = arg.value!;
+
+			return result;
+		}, {});
+
+		return commandParameters;
+	}
+
+	/**
+	 * Generates a usage information based on provided command configurations.
+	 */
+	public getUsageNotes(): string {
+		return "";
+	}
+
+	/**
+	 * Combines provided command configurations and command line input to make a command function ready to be called.
+	 *
+	 * @param argv - Command line input normally taken from `process.argv`.
+	 */
+	public getCommandExecutable(argv: Array<string>): CommandExecutable {
+		const commandName = this.getCommandName(argv);
+		const rawArgs = this.getRawArgs(argv);
+
+		const commandConfig = this.getCommandConfig(commandName);
+		const args = this.getArgs(rawArgs);
+
+		const commandParameters = this.getCommandParameters(commandConfig.parameters, args);
+
+		return commandConfig.command.bind(null, commandParameters);
+	}
 }
 
 /**
@@ -266,20 +297,25 @@ export function getUsageNotes(commandConfigs: CommandConfigs): string {
  * @param commandConfigs - Command configurations consisting of command executables and their parameter requirements.
  * @param argv - Command line input normally taken from `process.argv`.
  */
-export function run(commandConfigs: CommandConfigs, argv: Array<string>): Promise<unknown> {
+export function run(commandConfigs: CommandConfigs): unknown {
+	const command = new Command(commandConfigs);
+
+	let commandExecutable: CommandExecutable;
+
 	try {
-		const commandName = getCommandName(argv);
-		const rawArgs = getRawArgs(argv);
-
-		const commandConfig = getCommandConfig(commandConfigs, commandName);
-		const args = getArgs(rawArgs);
-
-		const commandParameters = getCommandParameters(commandConfig.parameters, args);
-
-		const commandResult = commandConfig.command(commandParameters);
-
-		return Promise.resolve(commandResult);
+		commandExecutable = command.getCommandExecutable(process.argv);
 	} catch (e) {
-		return Promise.reject(e);
+		console.log(e.message);
+		console.log(command.getUsageNotes());
+
+		process.exit(1);
+	}
+
+	try {
+		return commandExecutable();
+	} catch (e) {
+		console.log(e);
+
+		process.exit(1);
 	}
 }

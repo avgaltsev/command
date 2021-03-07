@@ -1,7 +1,7 @@
 /**
  * Command parameter type.
  */
-export type CommandParameter = number | string | boolean;
+export type CommandParameter = boolean | number | string;
 
 /**
  * A list of parameters that can be passed to a command handling function.

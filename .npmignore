@@ -1,10 +1,11 @@
-node_modules
+node_modules/
 package-lock.json
 
-tsconfig.json
-.eslintrc
 .eslintignore
+.eslintrc
+jest.config.js
+tsconfig.json
 
-*.ts
-
-!*.d.ts
+/src/
+/lib/**/*.test.js
+/lib/**/*.test.d.ts

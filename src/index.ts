@@ -71,7 +71,7 @@ export interface Parameter<T extends CommandParameter | null> extends AbstractPa
 }
 
 /**
- * Parameters configuration that corresponds the command handler function parameters list.
+ * Parameters configuration that corresponds to the command handler function parameters list.
  */
 export type Parameters<T extends CommandParameters> = {
 	[K in keyof T]: Parameter<T[K]>;
